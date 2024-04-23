@@ -28,6 +28,7 @@ class AlephAlpha(LLM):
     client: Any  #: :meta private:
     model: Optional[str] = "luminous-base"
     """Model name to use."""
+    use_case: Optional[str] = "completion"
 
     maximum_tokens: int = 64
     """The maximum number of tokens to be generated."""
@@ -132,33 +133,33 @@ class AlephAlpha(LLM):
     aleph_alpha_api_key: Optional[str] = None
     """API key for Aleph Alpha API."""
     host: str = "https://api.aleph-alpha.com"
-    """The hostname of the API host. 
+    """The hostname of the API host.
     The default one is "https://api.aleph-alpha.com")"""
     hosting: Optional[str] = None
     """Determines in which datacenters the request may be processed.
     You can either set the parameter to "aleph-alpha" or omit it (defaulting to None).
-    Not setting this value, or setting it to None, gives us maximal 
+    Not setting this value, or setting it to None, gives us maximal
     flexibility in processing your request in our
-    own datacenters and on servers hosted with other providers. 
+    own datacenters and on servers hosted with other providers.
     Choose this option for maximal availability.
-    Setting it to "aleph-alpha" allows us to only process the 
+    Setting it to "aleph-alpha" allows us to only process the
     request in our own datacenters.
     Choose this option for maximal data privacy."""
     request_timeout_seconds: int = 305
-    """Client timeout that will be set for HTTP requests in the 
+    """Client timeout that will be set for HTTP requests in the
     `requests` library's API calls.
     Server will close all requests after 300 seconds with an internal server error."""
     total_retries: int = 8
-    """The number of retries made in case requests fail with certain retryable 
+    """The number of retries made in case requests fail with certain retryable
     status codes. If the last
     retry fails a corresponding exception is raised. Note, that between retries
     an exponential backoff
     is applied, starting with 0.5 s after the first retry and doubling for
     each retry made. So with the
-    default setting of 8 retries a total wait time of 63.5 s is added 
+    default setting of 8 retries a total wait time of 63.5 s is added
     between the retries."""
     nice: bool = False
-    """Setting this to True, will signal to the API that you intend to be 
+    """Setting this to True, will signal to the API that you intend to be
     nice to other users
     by de-prioritizing your request below concurrent ones."""
 
@@ -195,6 +196,7 @@ class AlephAlpha(LLM):
     def _default_params(self) -> Dict[str, Any]:
         """Get the default parameters for calling the Aleph Alpha API."""
         return {
+            "use_case": self.use_case,
             "maximum_tokens": self.maximum_tokens,
             "temperature": self.temperature,
             "top_k": self.top_k,
@@ -260,6 +262,8 @@ class AlephAlpha(LLM):
                 response = aleph_alpha("Tell me a joke.")
         """
         from aleph_alpha_client import CompletionRequest, Prompt
+        from aleph_alpha_client.qa import QARequest
+        from aleph_alpha_client import Document as AlephAlphaDocument
 
         params = self._default_params
         if self.stop_sequences is not None and stop is not None:
@@ -271,11 +275,18 @@ class AlephAlpha(LLM):
         else:
             params["stop_sequences"] = stop
         params = {**params, **kwargs}
-        request = CompletionRequest(prompt=Prompt.from_text(prompt), **params)
-        response = self.client.complete(model=self.model, request=request)
-        text = response.completions[0].completion
+        if self.use_case == "qa":
+            request = QARequest(query=Prompt.from_text(prompt), max_answers=1, documents=AlephAlphaDocument.from_text(prompt))
+            response = self.client.qa(request=request)
+        elif self.use_case == "completion":
+            request = CompletionRequest(prompt=Prompt.from_text(prompt), **params)
+            response = self.client.complete(model=self.model, request=request)
+        else:
+            raise ValueError(f"Invalid use case: 'completion' or 'qa' expected, got {self.use_case}")
         # If stop tokens are provided, Aleph Alpha's endpoint returns them.
         # In order to make this consistent with other endpoints, we strip them.
+
+        text = response.completions[0].completion
         if stop is not None or self.stop_sequences is not None:
             text = enforce_stop_tokens(text, params["stop_sequences"])
         return text
